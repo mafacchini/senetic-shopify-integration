@@ -28,9 +28,8 @@ jobs:
         cache-dependency-path: 'app-senetic-shopify/package-lock.json'
         
     - name: 📥 Install Dependencies
-      run: |
-        working-directory: app-senetic-shopify  # ⬅️ CAMBIATO!
-        run: npm ci
+      working-directory: app-senetic-shopify
+      run: npm ci
         
     - name: 🔄 Run Senetic Import
       working-directory: app-senetic-shopify
@@ -39,7 +38,11 @@ jobs:
         SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
         SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
         FORCE_IMPORT: ${{ github.event.inputs.force_import || 'false' }}
-      run: node src/scripts/auto-import.js
+        NODE_ENV: production
+      run: |
+        echo "🔄 Import automatico avviato"
+        echo "📊 Force: $FORCE_IMPORT"
+        node src/scripts/auto-import.js
         
     - name: 📊 Upload Import Results
       if: always()
