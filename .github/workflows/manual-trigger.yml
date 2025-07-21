@@ -13,9 +13,14 @@ on:
           - force
           - test
       max_products:
-        description: 'Massimo numero di prodotti'
+        description: 'Massimo numero di prodotti (default: 10)'
         required: false
         default: '10'
+        type: string
+      categories:
+        description: 'Categorie da importare (separate da virgola)'
+        required: false
+        default: 'Sistemi di sorveglianza,Reti'
         type: string
 
 jobs:
@@ -31,29 +36,31 @@ jobs:
       with:
         node-version: '18'
         cache: 'npm'
-        cache-dependency-path: 'app-senetic-shopify/package-lock.json'  # ⬅️ AGGIUNTO!
+        cache-dependency-path: 'app-senetic-shopify/package-lock.json'
         
     - name: 📥 Install Dependencies
-      working-directory: app-senetic-shopify  # ⬅️ CAMBIATO!
+      working-directory: app-senetic-shopify
       run: npm ci
         
     - name: 🎮 Run Manual Import
-      working-directory: app-senetic-shopify  # ⬅️ CAMBIATO!
+      working-directory: app-senetic-shopify
       env:
         SENETIC_AUTH: ${{ secrets.SENETIC_AUTH }}
         SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
         SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
         IMPORT_TYPE: ${{ github.event.inputs.import_type }}
         MAX_PRODUCTS: ${{ github.event.inputs.max_products }}
+        CATEGORIES: ${{ github.event.inputs.categories }}
       run: |
         echo "🎮 Import manuale avviato"
         echo "📊 Tipo: $IMPORT_TYPE"
         echo "📦 Max prodotti: $MAX_PRODUCTS"
+        echo "📋 Categorie: $CATEGORIES"
         node src/scripts/auto-import.js
         
     - name: 📊 Display Results
       if: always()
-      working-directory: app-senetic-shopify  # ⬅️ CAMBIATO!
+      working-directory: app-senetic-shopify
       run: |
         echo "📋 Risultati import:"
         if [ -f logs/import-*.log ]; then
