@@ -1,0 +1,115 @@
+<!-- filepath: proomnibus-shop-dawn/templates/page.admin-import.liquid -->
+{% comment %} Protezione admin {% endcomment %}
+{% unless customer.tags contains 'admin' %}
+  {% assign admin_password = 'admin435711' %}
+  {% assign entered_password = request.form.admin_password %}
+  
+  {% if entered_password != admin_password %}
+    <div class="admin-login">
+      <form method="post">
+        <h2>Accesso Admin</h2>
+        <input type="password" name="admin_password" placeholder="Password admin" required>
+        <button type="submit">Accedi</button>
+      </form>
+    </div>
+    {% break %}
+  {% endif %}
+{% endunless %}
+<div class="admin-import-container">
+  <div class="page-width">
+    <div class="admin-header">
+      <h1 class="admin-title">🔄 Senetic Import Manager</h1>
+      <p class="admin-subtitle">Gestisci l'importazione prodotti da Senetic a Shopify</p>
+    </div>
+
+    <div class="admin-content">
+      <!-- Status Panel -->
+      <div class="status-panel">
+        <div class="status-item">
+          <div class="status-icon" id="shopify-status">⚪</div>
+          <span>Shopify</span>
+        </div>
+        <div class="status-item">
+          <div class="status-icon" id="senetic-status">⚪</div>
+          <span>Senetic</span>
+        </div>
+        <div class="status-item">
+          <div class="status-icon" id="system-status">⚪</div>
+          <span>Sistema</span>
+        </div>
+      </div>
+
+      <!-- Import Controls -->
+      <div class="import-controls">
+        <div class="control-group">
+          <h3>📊 Statistiche Prodotti</h3>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-number" id="total-products">-</div>
+              <div class="stat-label">Totale Prodotti</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="hikvision-products">-</div>
+              <div class="stat-label">Hikvision</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-number" id="ubiquiti-products">-</div>
+              <div class="stat-label">Ubiquiti</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <h3>🔄 Importazione</h3>
+          <div class="import-section">
+            <button id="import-btn" class="btn btn-primary">
+              <span class="btn-text">Importa Prodotti</span>
+              <span class="btn-loader" style="display: none;">🔄</span>
+            </button>
+            <button id="check-status-btn" class="btn btn-secondary">
+              Verifica Stato
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-container" id="progress-container" style="display: none;">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-text" id="progress-text">Preparazione...</div>
+      </div>
+
+      <!-- Results -->
+      <div class="results-container" id="results-container" style="display: none;">
+        <h3>📋 Risultati Import</h3>
+        <div class="results-grid">
+          <div class="result-item">
+            <div class="result-number" id="imported-count">0</div>
+            <div class="result-label">Importati</div>
+          </div>
+          <div class="result-item">
+            <div class="result-number" id="updated-count">0</div>
+            <div class="result-label">Aggiornati</div>
+          </div>
+          <div class="result-item">
+            <div class="result-number" id="failed-count">0</div>
+            <div class="result-label">Falliti</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div class="logs-container">
+        <h3>📝 Log Sistema</h3>
+        <div class="logs-box" id="logs-box">
+          <div class="log-entry">Sistema pronto per l'importazione</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- JavaScript -->
+<script src="{{ 'admin-import-manager.js' | asset_url }}" defer></script>

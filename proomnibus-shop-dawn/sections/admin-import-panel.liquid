@@ -1,0 +1,411 @@
+<!-- filepath: sections/admin-import-panel.liquid -->
+<div class="admin-import-panel" data-section-id="{{ section.id }}">
+  <div class="page-width">
+    <div class="admin-panel-header">
+      <h2>{{ section.settings.title }}</h2>
+      <p>{{ section.settings.description }}</p>
+    </div>
+
+    <div class="import-controls">
+      <!-- Status Panel -->
+      <div class="import-status-card">
+        <h3>📊 Import Status</h3>
+        <div id="import-status" class="status-display">
+          <span class="status-indicator" data-status="idle">⚪ Ready</span>
+          <div class="last-import">Last import: <span id="last-import-time">Never</span></div>
+        </div>
+      </div>
+
+      <!-- Manual Import -->
+      <div class="import-action-card">
+        <h3>🔄 Manual Import</h3>
+        <button id="trigger-import" class="btn btn-primary">
+          <span class="btn-text">Start Import</span>
+          <span class="btn-loader" style="display: none;">
+            <svg class="spinner" viewBox="0 0 50 50">
+              <circle class="path" cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="5"></circle>
+            </svg>
+          </span>
+        </button>
+        <div class="import-options">
+          <label>
+            <input type="checkbox" id="dry-run" checked>
+            Dry Run (Preview Only)
+          </label>
+          <label>
+            <input type="checkbox" id="force-update">
+            Force Update Existing
+          </label>
+        </div>
+      </div>
+
+      <!-- Schedule Settings -->
+      <div class="schedule-card">
+        <h3>⏰ Schedule Settings</h3>
+        <div class="schedule-controls">
+          <select id="schedule-frequency">
+            <option value="disabled">Disabled</option>
+            <option value="hourly">Every Hour</option>
+            <option value="daily" selected>Daily at 4 AM</option>
+            <option value="weekly">Weekly</option>
+          </select>
+          <button id="save-schedule" class="btn btn-secondary">Save Schedule</button>
+        </div>
+      </div>
+
+      <!-- Import Log -->
+      <div class="import-log-card">
+        <h3>📋 Import Log</h3>
+        <div id="import-log" class="log-container">
+          <div class="log-entry">No imports yet...</div>
+        </div>
+        <button id="clear-log" class="btn btn-text">Clear Log</button>
+      </div>
+
+      <!-- Statistics -->
+      <div class="import-stats-card">
+        <h3>📈 Statistics</h3>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-value" id="total-products">0</span>
+            <span class="stat-label">Total Products</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="successful-imports">0</span>
+            <span class="stat-label">Successful</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="failed-imports">0</span>
+            <span class="stat-label">Failed</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-value" id="last-duration">0s</span>
+            <span class="stat-label">Last Duration</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div id="import-progress" class="progress-container" style="display: none;">
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: 0%"></div>
+      </div>
+      <div class="progress-text">Importing products... <span id="progress-current">0</span>/<span id="progress-total">0</span></div>
+    </div>
+
+    <!-- Results Panel -->
+    <div id="import-results" class="results-panel" style="display: none;">
+      <h3>Import Results</h3>
+      <div class="results-content"></div>
+    </div>
+  </div>
+</div>
+
+<style>
+.admin-import-panel {
+  padding: 2rem 0;
+  background: #f8f9fa;
+  min-height: 100vh;
+}
+
+.admin-panel-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.admin-panel-header h2 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  color: #2c3e50;
+}
+
+.import-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.import-status-card,
+.import-action-card,
+.schedule-card,
+.import-log-card,
+.import-stats-card {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  border: 1px solid #e9ecef;
+}
+
+.import-status-card h3,
+.import-action-card h3,
+.schedule-card h3,
+.import-log-card h3,
+.import-stats-card h3 {
+  margin-bottom: 1rem;
+  color: #495057;
+  font-size: 1.1rem;
+}
+
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  background: #e9ecef;
+}
+
+.status-indicator[data-status="running"] {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-indicator[data-status="success"] {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-indicator[data-status="error"] {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: #007bff;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #0056b3;
+}
+
+.btn-secondary {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-text {
+  background: transparent;
+  color: #007bff;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+}
+
+.spinner .path {
+  stroke-dasharray: 90, 150;
+  stroke-dashoffset: 0;
+  stroke-linecap: round;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.import-options {
+  margin-top: 1rem;
+}
+
+.import-options label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.import-options input[type="checkbox"] {
+  margin-right: 0.5rem;
+}
+
+.schedule-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.schedule-controls select {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+}
+
+.log-container {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.log-entry {
+  margin-bottom: 0.5rem;
+  padding: 0.25rem;
+  border-left: 3px solid #dee2e6;
+  padding-left: 0.75rem;
+}
+
+.log-entry.success {
+  border-left-color: #28a745;
+  color: #155724;
+}
+
+.log-entry.error {
+  border-left-color: #dc3545;
+  color: #721c24;
+}
+
+.log-entry.warning {
+  border-left-color: #ffc107;
+  color: #856404;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #007bff;
+}
+
+.stat-label {
+  display: block;
+  font-size: 0.85rem;
+  color: #6c757d;
+  margin-top: 0.25rem;
+}
+
+.progress-container {
+  margin: 2rem 0;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #007bff;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #6c757d;
+}
+
+.results-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin-top: 2rem;
+}
+
+@media (max-width: 768px) {
+  .import-controls {
+    grid-template-columns: 1fr;
+  }
+  
+  .schedule-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
+{% schema %}
+{
+  "name": "Admin Import Panel",
+  "settings": [
+    {
+      "type": "text",
+      "id": "title",
+      "label": "Panel Title",
+      "default": "🔄 Senetic Product Import Manager"
+    },
+    {
+      "type": "textarea",
+      "id": "description",
+      "label": "Description",
+      "default": "Manage and monitor product imports from Senetic to Shopify"
+    },
+    {
+      "type": "url",
+      "id": "import_app_url",
+      "label": "Import App URL",
+      "info": "URL of your running import app (e.g., http://localhost:3000)"
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_auto_import",
+      "label": "Enable Auto Import",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "import_batch_size",
+      "label": "Import Batch Size",
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "default": 10
+    }
+  ],
+  "presets": [
+    {
+      "name": "Admin Import Panel"
+    }
+  ]
+}
+{% endschema %}

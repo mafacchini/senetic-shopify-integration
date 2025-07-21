@@ -1,0 +1,39 @@
+name: 🎨 Deploy Shopify Theme
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'proomnibus-shop-dawn/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-theme:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📦 Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: 🛠️ Setup Shopify CLI
+      uses: shopify/shopify-cli-action@v1
+      
+    - name: 🚀 Deploy Theme
+      env:
+        SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
+        SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+      run: |
+        cd proomnibus-shop-dawn
+        shopify theme push --store=$SHOPIFY_STORE --theme=${{ secrets.SHOPIFY_THEME_ID }}
+        
+    - name: 📧 Notify Deployment
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: |
+          🎨 Deploy tema Shopify: ${{ job.status }}
+          🌟 Commit: ${{ github.sha }}
+          👤 Autore: ${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

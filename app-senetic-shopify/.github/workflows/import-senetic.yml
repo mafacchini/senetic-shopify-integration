@@ -1,0 +1,74 @@
+name: 🔄 Senetic Import Automatico
+
+on:
+  schedule:
+    # Ogni giorno alle 02:00 UTC (04:00 ora italiana)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Permette esecuzione manuale
+    inputs:
+      force_import:
+        description: 'Forza import anche se non ci sono cambiamenti'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  import-products:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📦 Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: 🟢 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: 📥 Install Dependencies
+      run: |
+        cd app-senetic-shopify
+        npm ci
+        
+    - name: 🔄 Run Senetic Import
+      env:
+        SENETIC_AUTH: ${{ secrets.SENETIC_AUTH }}
+        SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+        SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+        FORCE_IMPORT: ${{ github.event.inputs.force_import || 'false' }}
+      run: |
+        cd app-senetic-shopify
+        node src/scripts/auto-import.js
+        
+    - name: 📊 Upload Import Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: import-results-${{ github.run_number }}
+        path: app-senetic-shopify/logs/
+        retention-days: 30
+        
+    - name: 📧 Send Success Notification
+      if: success()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        text: |
+          ✅ Import Senetic completato con successo!
+          🕐 Orario: ${{ github.event.schedule || 'Manuale' }}
+          🔗 Dettagli: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        
+    - name: 📧 Send Error Notification
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        text: |
+          ❌ Import Senetic fallito!
+          🕐 Orario: ${{ github.event.schedule || 'Manuale' }}
+          🔗 Dettagli: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
