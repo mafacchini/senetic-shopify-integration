@@ -633,17 +633,24 @@ class Controller {
             console.log(`🖼️ Processing ${imageUrls.length} images for product ${productId}...`);
 
             // Debug temporaneo - aggiungi questo prima del controllo duplicati
-            console.log('\n🔍 === DEBUG DUPLICATE CHECK ===');
-            console.log(`New image URL: ${imageUrl}`);
-            console.log(`New image normalized: ${normalizedNewUrl}`);
-            console.log('Existing images:');
-            existingUrls.forEach((url, index) => {
-              const normalized = this.normalizeUrlForComparison(url);
-              console.log(`  ${index + 1}. ${url}`);
-              console.log(`     Normalized: ${normalized}`);
-              console.log(`     Match: ${normalized === normalizedNewUrl ? 'YES' : 'NO'}`);
-            });
-            console.log('=== END DEBUG ===\n');
+            console.log(`🔍 MANUAL CHECK - Product ${productId} images:`);
+            try {
+              const manualCheck = await axios.get(
+                `${SHOPIFY_STORE_URL}/admin/api/2024-04/products/${productId}/images.json`,
+                {
+                  headers: {
+                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+              console.log(`📊 Manual check found ${manualCheck.data.images?.length || 0} images`);
+              manualCheck.data.images?.forEach((img, index) => {
+                console.log(`   ${index + 1}. ID: ${img.id}, URL: ${img.src}`);
+              });
+            } catch (e) {
+              console.error(`❌ Manual check failed: ${e.message}`);
+            }
             
             // 🆕 STEP 1: Controlla immagini esistenti (VERSIONE MIGLIORATA)
             const existingImagesCheck = await this.checkExistingImages(productId);
