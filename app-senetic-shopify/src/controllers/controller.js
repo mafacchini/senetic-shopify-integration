@@ -16,6 +16,24 @@ class Controller {
     const imageUrls = [];
     const imgRegex = /<img[^>]+src="([^"]+)"/gi;
     let match;
+
+    // 🚫 DOMINI BLOCCATI (con protezioni anti-bot)
+    const blockedDomains = [
+      'gfx3.senetic.com',     // ❌ Protezioni anti-bot/referrer
+      'cdn.senetic.com',      // ❌ Altri CDN protetti
+      'assets.senetic.com'    // ❌ Assets protetti
+    ];
+    
+    // ✅ DOMINI SICURI (accessibili pubblicamente)
+    const allowedDomains = [
+      'senetic.pl',
+      'www.senetic.pl',
+      'gfx.senetic.pl',       // ✅ Server pubblico
+      'gfx2.senetic.pl'       // ✅ Server pubblico alternativo
+    ];
+    
+    let blockedCount = 0;
+    let allowedCount = 0;
     
     while ((match = imgRegex.exec(decodedHtml)) !== null) {
       let imgUrl = match[1];
@@ -34,26 +52,57 @@ class Controller {
         } else {
           fullUrl = `https://senetic.pl/${imgUrl}`;
         }
-        
-        if (!fullUrl.includes('%')) {
-          try {
-            const urlParts = fullUrl.split('senetic.pl');
-            if (urlParts.length === 2) {
-              const basePart = urlParts[0] + 'senetic.pl';
-              const pathPart = urlParts[1];
-              const encodedPath = pathPart.split('/').map(segment => 
-                segment ? encodeURIComponent(segment) : ''
-              ).join('/');
-              fullUrl = basePart + encodedPath;
-            }
-          } catch (error) {
-            console.warn('Errore encoding URL:', error.message);
+
+        try {
+          const urlObj = new URL(fullUrl);
+          
+          // 🚫 BLOCCA domini con protezioni
+          if (blockedDomains.includes(urlObj.hostname)) {
+            blockedCount++;
+            console.warn(`🚫 BLOCKED (anti-bot protection): ${urlObj.hostname}`);
+            console.warn(`   Original URL: ${fullUrl}`);
+            console.warn(`   Reason: Server has referrer/bot protection - Shopify cannot access`);
+            continue;
           }
-        }
+          
+          // ✅ PERMETTI solo domini sicuri
+          if (!allowedDomains.includes(urlObj.hostname)) {
+            console.warn(`⚠️ UNKNOWN DOMAIN: ${urlObj.hostname} - URL: ${fullUrl}`);
+            continue;
+          }
         
-        imageUrls.push(fullUrl);
+          // 🔧 RIMUOVI la codifica URL problematica
+          if (!fullUrl.includes('%')) {
+            try {
+              const urlParts = fullUrl.split('senetic.pl');
+              if (urlParts.length === 2) {
+                const basePart = urlParts[0] + 'senetic.pl';
+                const pathPart = urlParts[1];
+                const encodedPath = pathPart.split('/').map(segment => 
+                  segment ? encodeURIComponent(segment) : ''
+                ).join('/');
+                fullUrl = basePart + encodedPath;
+              }
+            } catch (error) {
+              console.warn('Errore encoding URL:', error.message);
+            }
+          }
+
+          allowedCount++;
+          console.log(`✅ SAFE image URL: ${fullUrl}`);
+          imageUrls.push(fullUrl);
+          
+        } catch (urlError) {
+          console.warn(`⚠️ Invalid URL format: ${fullUrl} - Error: ${urlError.message}`);
+          continue;
+        }
       }
     }
+  
+    console.log(`🖼️ Image extraction summary:`);
+    console.log(`   ✅ Safe URLs found: ${allowedCount}`);
+    console.log(`   🚫 Blocked URLs (anti-bot): ${blockedCount}`);
+    console.log(`   📝 Total processable images: ${imageUrls.length}`);
     
     return [...new Set(imageUrls)];
   }
@@ -631,26 +680,6 @@ class Controller {
 
           if (imageUrls.length > 0 && productId) {
             console.log(`🖼️ Processing ${imageUrls.length} images for product ${productId}...`);
-
-            // Debug temporaneo - aggiungi questo prima del controllo duplicati
-            console.log(`🔍 MANUAL CHECK - Product ${productId} images:`);
-            try {
-              const manualCheck = await axios.get(
-                `${SHOPIFY_STORE_URL}/admin/api/2024-04/products/${productId}/images.json`,
-                {
-                  headers: {
-                    'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-                    'Content-Type': 'application/json'
-                  }
-                }
-              );
-              console.log(`📊 Manual check found ${manualCheck.data.images?.length || 0} images`);
-              manualCheck.data.images?.forEach((img, index) => {
-                console.log(`   ${index + 1}. ID: ${img.id}, URL: ${img.src}`);
-              });
-            } catch (e) {
-              console.error(`❌ Manual check failed: ${e.message}`);
-            }
             
             // 🆕 STEP 1: Controlla immagini esistenti (VERSIONE MIGLIORATA)
             const existingImagesCheck = await this.checkExistingImages(productId);
@@ -674,13 +703,17 @@ class Controller {
             let newUploads = 0;
             let duplicatesSkipped = 0;
             let uploadErrors = 0;
+            let existingUrls = [];
 
             for (const imageUrl of imageUrls.slice(0, 5)) {
               importResults.images_processed++;
               console.log(`📤 Processing image ${importResults.images_processed}: ${imageUrl}`);
               
-              // Usa i dati dettagliati per il confronto
-              const existingUrls = existingImageData.map(img => img.src);
+              // 🔧 CORREZIONE: Usa existingImagesCheck invece di existingImageData
+              if (existingImagesCheck.success && existingImagesCheck.existingUrls) {
+                existingUrls = existingImagesCheck.existingUrls;
+              }
+              
               const uploadResult = await this.uploadImageToShopify(imageUrl, productId, existingUrls);
               uploadedImages.push(uploadResult);
               
