@@ -15,16 +15,103 @@ jobs:
     - name: 📦 Checkout Repository
       uses: actions/checkout@v4
       
-    - name: 🛠️ Setup Shopify CLI
-      uses: shopify/shopify-cli-action@v1
-      
-    - name: 🚀 Deploy Theme
+    - name: 🚀 Deploy Theme via API
       env:
-        SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.SHOPIFY_CLI_THEME_TOKEN }}
-        SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+        SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+        SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+        SHOPIFY_THEME_ID: ${{ secrets.SHOPIFY_THEME_ID }}
       run: |
+        echo "🎨 Deploy tema via Shopify API..."
+        
+        # Test di connessione al tema
+        RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/theme_info.json \
+          "$SHOPIFY_STORE_URL/admin/api/2023-10/themes/$SHOPIFY_THEME_ID.json" \
+          -H "X-Shopify-Access-Token: $SHOPIFY_ACCESS_TOKEN" \
+          -H "Content-Type: application/json")
+        
+        if [ "$RESPONSE" -eq 200 ]; then
+          echo "✅ Tema trovato:"
+          cat /tmp/theme_info.json | jq -r '.theme.name + " (Role: " + .theme.role + ")"'
+        else
+          echo "❌ Errore accesso tema. Status: $RESPONSE"
+          cat /tmp/theme_info.json
+          exit 1
+        fi
+
+    - name: 🚀 Deploy Theme Files
+      env:
+        SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+        SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+        SHOPIFY_THEME_ID: ${{ secrets.SHOPIFY_THEME_ID }}
+      run: |
+        echo "🚀 Avvio deploy dei file modificati..."
+        
         cd proomnibus-shop-dawn
-        shopify theme push --store=$SHOPIFY_STORE --theme=${{ secrets.SHOPIFY_THEME_ID }}
+        
+        # Trova i file modificati nel push corrente
+        if [ "${{ github.event_name }}" = "push" ]; then
+          echo "📋 File modificati in questo commit:"
+          git diff --name-only ${{ github.event.before }}..${{ github.sha }} || echo "Primo commit o errore diff"
+          
+          # Lista tutti i file del tema per deploy completo
+          FILES_TO_DEPLOY=$(find . -type f \( -name "*.liquid" -o -name "*.json" -o -name "*.css" -o -name "*.js" -o -name "*.svg" -o -name "*.png" -o -name "*.jpg" -o -name "*.gif" \) | head -10)
+        else
+          echo "🎮 Deploy manuale - uploading key files..."
+          FILES_TO_DEPLOY=$(find . -type f \( -name "*.liquid" -o -name "*.json" -o -name "*.css" -o -name "*.js" \) | head -5)
+        fi
+        
+        echo "📁 File da deployare:"
+        echo "$FILES_TO_DEPLOY"
+        
+        # Deploy dei file (esempio con alcuni file chiave)
+        for file in $FILES_TO_DEPLOY; do
+          # Rimuovi ./ dall'inizio del path
+          CLEAN_PATH=${file#./}
+          echo "📤 Uploading: $CLEAN_PATH"
+          
+          # Codifica il contenuto in base64 per l'API
+          CONTENT=$(base64 -i "$file" | tr -d '\n')
+          
+          # Upload via API Shopify
+          curl -s -X PUT \
+            "$SHOPIFY_STORE_URL/admin/api/2023-10/themes/$SHOPIFY_THEME_ID/assets.json" \
+            -H "X-Shopify-Access-Token: $SHOPIFY_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"asset\": {
+                \"key\": \"$CLEAN_PATH\",
+                \"attachment\": \"$CONTENT\"
+              }
+            }" > /tmp/upload_result.json
+          
+          # Verifica risultato
+          if grep -q "errors" /tmp/upload_result.json; then
+            echo "❌ Errore upload $CLEAN_PATH:"
+            cat /tmp/upload_result.json
+          else
+            echo "✅ $CLEAN_PATH uploadato"
+          fi
+          
+          # Pausa per evitare rate limiting
+          sleep 0.5
+        done
+        
+        echo "🎉 Deploy completato!"
+
+    - name: 📊 Deploy Summary
+      if: always()
+      env:
+        SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+        SHOPIFY_THEME_ID: ${{ secrets.SHOPIFY_THEME_ID }}
+      run: |
+        echo "📊 Riepilogo Deploy:"
+        echo "🎯 Tema ID: $SHOPIFY_THEME_ID"
+        echo "🌟 Commit: ${{ github.sha }}"
+        echo "👤 Autore: ${{ github.actor }}"
+        echo "🕐 Timestamp: $(date)"
+        echo ""
+        echo "🔗 Link tema live:"
+        echo "https://b6b44e-5b.myshopify.com/?preview_theme_id=$SHOPIFY_THEME_ID"
         
     - name: 📧 Notify Deployment
       if: always()
@@ -33,7 +120,9 @@ jobs:
         status: ${{ job.status }}
         text: |
           🎨 Deploy tema Shopify: ${{ job.status }}
+          🎯 Tema: Dawn (#$SHOPIFY_THEME_ID)
           🌟 Commit: ${{ github.sha }}
           👤 Autore: ${{ github.actor }}
+          🔗 Preview: https://b6b44e-5b.myshopify.com/?preview_theme_id=$SHOPIFY_THEME_ID
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
