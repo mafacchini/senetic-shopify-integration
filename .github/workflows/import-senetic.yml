@@ -9,7 +9,7 @@ on:
       force_import:
         description: 'Forza import anche se non ci sono cambiamenti'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
