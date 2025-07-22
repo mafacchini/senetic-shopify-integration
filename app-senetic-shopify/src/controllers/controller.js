@@ -104,10 +104,98 @@ class Controller {
     };
   }
 
-  // 🆕 FUNZIONE: Upload immagine a Shopify
-  async uploadImageToShopify(imageUrl, productId) {
+  // 🆕 FUNZIONE: Controlla se immagine esiste già nel prodotto
+  async checkExistingImages(productId) {
     try {
-      console.log(`📤 Uploading image: ${imageUrl}`);
+      console.log(`🔍 Checking existing images for product ${productId}...`);
+      
+      const response = await axios.get(
+        `${SHOPIFY_STORE_URL}/admin/api/2024-04/products/${productId}/images.json`,
+        {
+          headers: {
+            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const existingImages = response.data.images || [];
+      console.log(`📊 Found ${existingImages.length} existing images in product`);
+      
+      // Estrai solo gli URL delle immagini esistenti
+      const existingUrls = existingImages.map(img => {
+        // Normalizza l'URL per il confronto
+        let normalizedUrl = img.src;
+        if (normalizedUrl) {
+          // Rimuovi parametri di query e frammenti per confronto pulito
+          normalizedUrl = normalizedUrl.split('?')[0].split('#')[0];
+        }
+        return normalizedUrl;
+      });
+      
+      return {
+        success: true,
+        existingImages: existingImages,
+        existingUrls: existingUrls,
+        count: existingImages.length
+      };
+
+    } catch (error) {
+      console.error(`❌ Error checking existing images:`, error.message);
+      return {
+        success: false,
+        error: error.message,
+        existingImages: [],
+        existingUrls: [],
+        count: 0
+      };
+    }
+  }
+
+  // 🆕 FUNZIONE: Normalizza URL per confronto
+  normalizeUrlForComparison(url) {
+    if (!url) return '';
+    
+    try {
+      // Rimuovi protocollo, parametri query e frammenti
+      let normalized = url
+        .replace(/^https?:\/\//, '')  // Rimuovi protocollo
+        .split('?')[0]                // Rimuovi query params
+        .split('#')[0]                // Rimuovi frammenti
+        .toLowerCase()                // Lowercase per confronto
+        .trim();
+      
+      return normalized;
+    } catch (error) {
+      console.warn(`⚠️ Error normalizing URL ${url}:`, error.message);
+      return url;
+    }
+  }
+
+  // 🔧 FUNZIONE MIGLIORATA: Upload immagine (CON CONTROLLO DUPLICATI)
+  async uploadImageToShopify(imageUrl, productId, existingUrls = []) {
+    try {
+      console.log(`📤 Processing image: ${imageUrl}`);
+      
+      // 🆕 CONTROLLO DUPLICATI
+      const normalizedNewUrl = this.normalizeUrlForComparison(imageUrl);
+      const isDuplicate = existingUrls.some(existingUrl => {
+        const normalizedExisting = this.normalizeUrlForComparison(existingUrl);
+        return normalizedExisting === normalizedNewUrl;
+      });
+      
+      if (isDuplicate) {
+        console.log(`⚠️ Image already exists, skipping: ${imageUrl}`);
+        return {
+          success: false,
+          error: 'Image already exists in product',
+          originalUrl: imageUrl,
+          skipped: true,
+          duplicate: true
+        };
+      }
+      
+      console.log(`📤 Uploading new image: ${imageUrl}`);
       
       const imagePayload = {
         image: {
@@ -126,12 +214,13 @@ class Controller {
         }
       );
 
-      console.log(`✅ Image uploaded successfully: ID ${response.data.image.id}`);
+      console.log(`✅ New image uploaded successfully: ID ${response.data.image.id}`);
       return {
         success: true,
         imageId: response.data.image.id,
         src: response.data.image.src,
-        originalUrl: imageUrl
+        originalUrl: imageUrl,
+        isNew: true
       };
 
     } catch (error) {
@@ -221,7 +310,8 @@ class Controller {
       errors: [],
       images_processed: 0,
       images_uploaded: 0,
-      images_failed: 0
+      images_failed: 0,
+      images_duplicates: 0
     };
 
     try {
@@ -521,32 +611,66 @@ class Controller {
             }
           }
 
-          // 🆕 UPLOAD DELLE IMMAGINI AL PRODOTTO
+          // 🆕 UPLOAD DELLE IMMAGINI AL PRODOTTO (CON CONTROLLO DUPLICATI)
           let uploadedImages = [];
-          
-          if (imageUrls.length > 0 && productId) { // 🎯 Ora productId è correttamente definito!
-            console.log(`🖼️ Uploading ${imageUrls.length} images to product ${productId}...`);
+
+          if (imageUrls.length > 0 && productId) {
+            console.log(`🖼️ Processing ${imageUrls.length} images for product ${productId}...`);
+            
+            // 🆕 STEP 1: Controlla immagini esistenti
+            const existingImagesCheck = await this.checkExistingImages(productId);
+            let existingUrls = [];
+            
+            if (existingImagesCheck.success) {
+              existingUrls = existingImagesCheck.existingUrls;
+              console.log(`📊 Product has ${existingImagesCheck.count} existing images`);
+              
+              if (existingImagesCheck.count > 0) {
+                console.log(`🔍 Existing images URLs:`);
+                existingUrls.forEach((url, index) => {
+                  console.log(`   ${index + 1}. ${url}`);
+                });
+              }
+            } else {
+              console.warn(`⚠️ Could not check existing images: ${existingImagesCheck.error}`);
+            }
+            
+            // 🆕 STEP 2: Upload solo immagini nuove
+            let newUploads = 0;
+            let duplicatesSkipped = 0;
+            let uploadErrors = 0;
             
             for (const imageUrl of imageUrls.slice(0, 5)) { // Limita a 5 immagini max
               importResults.images_processed++;
               console.log(`📤 Processing image ${importResults.images_processed}: ${imageUrl}`);
               
-              const uploadResult = await this.uploadImageToShopify(imageUrl, productId);
+              const uploadResult = await this.uploadImageToShopify(imageUrl, productId, existingUrls);
               uploadedImages.push(uploadResult);
               
               if (uploadResult.success) {
                 importResults.images_uploaded++;
-                console.log(`✅ Image uploaded successfully: ${uploadResult.imageId}`);
+                newUploads++;
+                console.log(`✅ New image uploaded: ${uploadResult.imageId}`);
+              } else if (uploadResult.duplicate) {
+                importResults.images_duplicates++; // 🆕 CONTA DUPLICATI
+                duplicatesSkipped++;
+                console.log(`⚠️ Duplicate skipped: ${uploadResult.originalUrl}`);
               } else {
                 importResults.images_failed++;
-                console.log(`❌ Image upload failed: ${uploadResult.error}`);
+                uploadErrors++;
+                console.log(`❌ Upload failed: ${uploadResult.error}`);
               }
               
               // Pausa per evitare rate limiting
               await new Promise(r => setTimeout(r, 500));
             }
             
-            console.log(`📊 Images summary: ${importResults.images_uploaded} uploaded, ${importResults.images_failed} failed`);
+            console.log(`📊 Images summary for product ${productId}:`);
+            console.log(`   ✅ New uploads: ${newUploads}`);
+            console.log(`   ⚠️ Duplicates skipped: ${duplicatesSkipped}`);
+            console.log(`   ❌ Upload errors: ${uploadErrors}`);
+            console.log(`   📊 Total existing: ${existingUrls.length}`);
+            
           } else {
             console.log(`⚠️ Skipping image upload: imageUrls=${imageUrls.length}, productId=${productId}`);
           }
@@ -570,7 +694,8 @@ class Controller {
             status: productStatus,
             images_found: imageUrls.length,
             images_uploaded: uploadedImages.filter(img => img.success).length,
-            images_failed: uploadedImages.filter(img => !img.success).length,
+            images_failed: uploadedImages.filter(img => !img.success && !img.duplicate).length,
+            images_duplicates: uploadedImages.filter(img => img.duplicate).length,
             html_processing: htmlProcessing.stats
           });
 
