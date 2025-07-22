@@ -1,9 +1,0 @@
-.env
-.vercel
-node_modules/
-logs/
-*.log
-.DS_Store
-.vscode/
-dist/
-build/
