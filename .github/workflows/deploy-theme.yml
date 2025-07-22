@@ -151,17 +151,20 @@ jobs:
         echo "📱 Preview: https://b6b44e-5b.myshopify.com/?preview_theme_id=$SHOPIFY_THEME_ID"
         echo "⚙️ Editor: https://b6b44e-5b.myshopify.com/admin/themes/$SHOPIFY_THEME_ID/editor"
         
-    - name: 📧 Notify Deployment
+    - name: 📧 GitHub Deployment Notification
       if: always()
-      uses: 8398a7/action-slack@v3
-      with:
-        status: ${{ job.status }}
-        text: |
-          🎨 Deploy tema Shopify: ${{ job.status }}
-          🎯 Tema: ${{ env.THEME_NAME }} (#${{ secrets.SHOPIFY_THEME_ID }})
-          ✅ Successi: ${{ env.DEPLOY_SUCCESS }} | ❌ Errori: ${{ env.DEPLOY_ERRORS }}
-          🌟 Commit: ${{ github.sha }}
-          👤 Autore: ${{ github.actor }}
-          🔗 Preview: https://b6b44e-5b.myshopify.com/?preview_theme_id=${{ secrets.SHOPIFY_THEME_ID }}
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        echo "::notice title=🎨 Deploy Tema Completato::✅ Successi: $DEPLOY_SUCCESS | ❌ Errori: $DEPLOY_ERRORS"
+        
+        # Summary per GitHub Actions
+        echo "## 🎨 Deploy Tema Shopify" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Tema:** $THEME_NAME (#${{ secrets.SHOPIFY_THEME_ID }})" >> $GITHUB_STEP_SUMMARY
+        echo "**✅ Successi:** $DEPLOY_SUCCESS" >> $GITHUB_STEP_SUMMARY
+        echo "**❌ Errori:** $DEPLOY_ERRORS" >> $GITHUB_STEP_SUMMARY
+        echo "**🌟 Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**👤 Autore:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Link Utili" >> $GITHUB_STEP_SUMMARY
+        echo "- [📱 Preview Tema](https://b6b44e-5b.myshopify.com/?preview_theme_id=${{ secrets.SHOPIFY_THEME_ID }})" >> $GITHUB_STEP_SUMMARY
+        echo "- [⚙️ Editor Tema](https://b6b44e-5b.myshopify.com/admin/themes/${{ secrets.SHOPIFY_THEME_ID }}/editor)" >> $GITHUB_STEP_SUMMARY
