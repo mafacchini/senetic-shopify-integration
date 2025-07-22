@@ -152,40 +152,55 @@ class Controller {
     }
   }
 
-  // 🆕 FUNZIONE: Normalizza URL per confronto
+  // 🔧 FUNZIONE MIGLIORATA: Normalizza URL per confronto (VERSIONE AVANZATA)
   normalizeUrlForComparison(url) {
     if (!url) return '';
     
     try {
-      // Rimuovi protocollo, parametri query e frammenti
-      let normalized = url
-        .replace(/^https?:\/\//, '')  // Rimuovi protocollo
-        .split('?')[0]                // Rimuovi query params
-        .split('#')[0]                // Rimuovi frammenti
-        .toLowerCase()                // Lowercase per confronto
-        .trim();
+      // Estrai il nome del file dall'URL
+      const urlObj = new URL(url);
+      let filename = urlObj.pathname.split('/').pop(); // Ultimo segmento del path
       
-      return normalized;
+      // Rimuovi parametri di query (come ?v=123456)
+      filename = filename.split('?')[0];
+      
+      // Normalizza il nome file
+      filename = filename
+        .toLowerCase()
+        .trim()
+        // Rimuovi caratteri speciali ma mantieni punti e underscore
+        .replace(/[^a-z0-9._-]/g, '')
+        // Rimuovi underscore e trattini per confronto più flessibile
+        .replace(/[-_]/g, '');
+      
+      console.log(`🔍 Normalized "${url}" → "${filename}"`);
+      return filename;
+      
     } catch (error) {
       console.warn(`⚠️ Error normalizing URL ${url}:`, error.message);
-      return url;
+      return url.toLowerCase();
     }
   }
 
-  // 🔧 FUNZIONE MIGLIORATA: Upload immagine (CON CONTROLLO DUPLICATI)
+  // 🔧 FUNZIONE MIGLIORATA: Controlla duplicati con confronto file names
   async uploadImageToShopify(imageUrl, productId, existingUrls = []) {
     try {
       console.log(`📤 Processing image: ${imageUrl}`);
       
-      // 🆕 CONTROLLO DUPLICATI
+      // 🆕 CONTROLLO DUPLICATI MIGLIORATO
       const normalizedNewUrl = this.normalizeUrlForComparison(imageUrl);
+      
+      console.log(`🔍 Checking for duplicates...`);
+      console.log(`   New image filename: "${normalizedNewUrl}"`);
+      
       const isDuplicate = existingUrls.some(existingUrl => {
         const normalizedExisting = this.normalizeUrlForComparison(existingUrl);
+        console.log(`   Comparing with existing: "${normalizedExisting}"`);
         return normalizedExisting === normalizedNewUrl;
       });
       
       if (isDuplicate) {
-        console.log(`⚠️ Image already exists, skipping: ${imageUrl}`);
+        console.log(`⚠️ DUPLICATE FOUND - Image already exists, skipping: ${imageUrl}`);
         return {
           success: false,
           error: 'Image already exists in product',
@@ -195,7 +210,7 @@ class Controller {
         };
       }
       
-      console.log(`📤 Uploading new image: ${imageUrl}`);
+      console.log(`✅ No duplicates found - Uploading new image: ${imageUrl}`);
       
       const imagePayload = {
         image: {
@@ -617,33 +632,35 @@ class Controller {
           if (imageUrls.length > 0 && productId) {
             console.log(`🖼️ Processing ${imageUrls.length} images for product ${productId}...`);
             
-            // 🆕 STEP 1: Controlla immagini esistenti
+            // 🆕 STEP 1: Controlla immagini esistenti (VERSIONE MIGLIORATA)
             const existingImagesCheck = await this.checkExistingImages(productId);
-            let existingUrls = [];
-            
+            let existingImageData = [];
+
             if (existingImagesCheck.success) {
-              existingUrls = existingImagesCheck.existingUrls;
+              existingImageData = existingImagesCheck.existingImageData || [];
               console.log(`📊 Product has ${existingImagesCheck.count} existing images`);
               
               if (existingImagesCheck.count > 0) {
-                console.log(`🔍 Existing images URLs:`);
-                existingUrls.forEach((url, index) => {
-                  console.log(`   ${index + 1}. ${url}`);
+                console.log(`🔍 Existing images normalized filenames:`);
+                existingImageData.forEach((img, index) => {
+                  console.log(`   ${index + 1}. ${img.normalizedFilename} (ID: ${img.id})`);
                 });
               }
             } else {
               console.warn(`⚠️ Could not check existing images: ${existingImagesCheck.error}`);
             }
-            
-            // 🆕 STEP 2: Upload solo immagini nuove
+
+            // 🆕 STEP 2: Upload solo immagini nuove (CON CONFRONTO MIGLIORATO)
             let newUploads = 0;
             let duplicatesSkipped = 0;
             let uploadErrors = 0;
-            
-            for (const imageUrl of imageUrls.slice(0, 5)) { // Limita a 5 immagini max
+
+            for (const imageUrl of imageUrls.slice(0, 5)) {
               importResults.images_processed++;
               console.log(`📤 Processing image ${importResults.images_processed}: ${imageUrl}`);
               
+              // Usa i dati dettagliati per il confronto
+              const existingUrls = existingImageData.map(img => img.src);
               const uploadResult = await this.uploadImageToShopify(imageUrl, productId, existingUrls);
               uploadedImages.push(uploadResult);
               
@@ -652,7 +669,7 @@ class Controller {
                 newUploads++;
                 console.log(`✅ New image uploaded: ${uploadResult.imageId}`);
               } else if (uploadResult.duplicate) {
-                importResults.images_duplicates++; // 🆕 CONTA DUPLICATI
+                importResults.images_duplicates++;
                 duplicatesSkipped++;
                 console.log(`⚠️ Duplicate skipped: ${uploadResult.originalUrl}`);
               } else {
