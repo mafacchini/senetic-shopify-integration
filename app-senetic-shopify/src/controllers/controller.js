@@ -2,13 +2,148 @@ require('dotenv').config();
 const axios = require('axios');
 const he = require('he');
 
-// Importa il servizio webhook (commentato per ora dato che non esiste ancora)
-// const webhookService = require('../services/webhookService');
-
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 class Controller {
+  // 🆕 FUNZIONE: Estrae URL delle immagini dal HTML
+  extractImageUrls(htmlContent) {
+    if (!htmlContent) {
+      return [];
+    }
+    
+    const decodedHtml = he.decode(htmlContent);
+    const imageUrls = [];
+    const imgRegex = /<img[^>]+src="([^"]+)"/gi;
+    let match;
+    
+    while ((match = imgRegex.exec(decodedHtml)) !== null) {
+      let imgUrl = match[1];
+      
+      if (imgUrl && 
+          !imgUrl.startsWith('data:') && 
+          (imgUrl.includes('.jpg') || imgUrl.includes('.jpeg') || imgUrl.includes('.png') || imgUrl.includes('.gif'))) {
+        
+        let fullUrl;
+        if (imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+          fullUrl = imgUrl;
+        } else if (imgUrl.startsWith('//')) {
+          fullUrl = `https:${imgUrl}`;
+        } else if (imgUrl.startsWith('/')) {
+          fullUrl = `https://senetic.pl${imgUrl}`;
+        } else {
+          fullUrl = `https://senetic.pl/${imgUrl}`;
+        }
+        
+        if (!fullUrl.includes('%')) {
+          try {
+            const urlParts = fullUrl.split('senetic.pl');
+            if (urlParts.length === 2) {
+              const basePart = urlParts[0] + 'senetic.pl';
+              const pathPart = urlParts[1];
+              const encodedPath = pathPart.split('/').map(segment => 
+                segment ? encodeURIComponent(segment) : ''
+              ).join('/');
+              fullUrl = basePart + encodedPath;
+            }
+          } catch (error) {
+            console.warn('Errore encoding URL:', error.message);
+          }
+        }
+        
+        imageUrls.push(fullUrl);
+      }
+    }
+    
+    return [...new Set(imageUrls)];
+  }
+
+  // 🆕 FUNZIONE: Rimuove immagini dal HTML
+  removeImagesFromHtml(htmlContent) {
+    if (!htmlContent) {
+      return '';
+    }
+    
+    const decodedHtml = he.decode(htmlContent);
+    
+    // Rimuove tutti i tag <img> e i loro contenuti
+    let cleanedHtml = decodedHtml.replace(/<img[^>]*>/gi, '');
+    
+    // Rimuove anche eventuali <figure> che contengono solo immagini
+    cleanedHtml = cleanedHtml.replace(/<figure[^>]*>[\s]*<\/figure>/gi, '');
+    
+    // Rimuove <div> vuoti che potrebbero essere rimasti dopo la rimozione delle immagini
+    cleanedHtml = cleanedHtml.replace(/<div[^>]*>[\s]*<\/div>/gi, '');
+    
+    // Rimuove <p> vuoti
+    cleanedHtml = cleanedHtml.replace(/<p[^>]*>[\s]*<\/p>/gi, '');
+    
+    // Rimuove spazi multipli e newline consecutive
+    cleanedHtml = cleanedHtml.replace(/\s+/g, ' ').trim();
+    
+    // Rimuove righe vuote multiple
+    cleanedHtml = cleanedHtml.replace(/(<br\s*\/?>){2,}/gi, '<br>');
+    
+    return cleanedHtml;
+  }
+
+  // 🆕 FUNZIONE: Estrae immagini E pulisce HTML
+  extractImagesAndCleanHtml(htmlContent) {
+    const imageUrls = this.extractImageUrls(htmlContent);
+    const cleanedHtml = this.removeImagesFromHtml(htmlContent);
+    
+    return {
+      imageUrls: imageUrls,
+      cleanedHtml: cleanedHtml,
+      stats: {
+        originalLength: htmlContent ? htmlContent.length : 0,
+        cleanedLength: cleanedHtml.length,
+        imagesFound: imageUrls.length,
+        sizeDifference: (htmlContent ? htmlContent.length : 0) - cleanedHtml.length
+      }
+    };
+  }
+
+  // 🆕 FUNZIONE: Upload immagine a Shopify
+  async uploadImageToShopify(imageUrl, productId) {
+    try {
+      console.log(`📤 Uploading image: ${imageUrl}`);
+      
+      const imagePayload = {
+        image: {
+          src: imageUrl
+        }
+      };
+
+      const response = await axios.post(
+        `${SHOPIFY_STORE_URL}/admin/api/2024-04/products/${productId}/images.json`,
+        imagePayload,
+        {
+          headers: {
+            'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log(`✅ Image uploaded successfully: ID ${response.data.image.id}`);
+      return {
+        success: true,
+        imageId: response.data.image.id,
+        src: response.data.image.src,
+        originalUrl: imageUrl
+      };
+
+    } catch (error) {
+      console.error(`❌ Failed to upload image ${imageUrl}:`, error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data || error.message,
+        originalUrl: imageUrl
+      };
+    }
+  }
+
   // Metodo per mostrare l'inventario Senetic
   async showSeneticInventory(req, res) {
     try {
@@ -83,18 +218,14 @@ class Controller {
       updated: 0,
       skipped: 0,
       failed: 0,
-      errors: []
+      errors: [],
+      images_processed: 0,
+      images_uploaded: 0,
+      images_failed: 0
     };
 
     try {
       console.log('🚀 Starting Shopify import process...');
-
-      // Notifica inizio import (se webhook service disponibile)
-      // await webhookService?.notifyImportStart({
-      //   source: req.query?.source || req.body?.source || 'manual',
-      //   batchSize: 10,
-      //   timestamp: new Date().toISOString()
-      // });
 
       // 1. Recupera inventario e catalogo
       const [inventoryResponse, catalogueResponse] = await Promise.all([
@@ -190,24 +321,24 @@ class Controller {
           processedCount++;
           console.log(`🔄 Processing ${processedCount}/${totalProducts}: ${prodotto.manufacturerItemCode}`);
 
-          // Notifica progresso (se webhook service disponibile)
-          // await webhookService?.notifyImportProgress({
-          //   current: processedCount,
-          //   total: totalProducts,
-          //   product_sku: prodotto.manufacturerItemCode,
-          //   product_title: prodotto.itemDescription
-          // });
-
           // Calcola la quantità totale disponibile
           const availability = inventoryItem.availability && Array.isArray(inventoryItem.availability.stockSchedules)
             ? inventoryItem.availability.stockSchedules.reduce((sum, s) => sum + (s.targetStock || 0), 0)
             : 0;
 
-          // Costruisci il prodotto per Shopify
+          // 🆕 ESTRAZIONE E PULIZIA IMMAGINI DAL HTML
+          const htmlProcessing = this.extractImagesAndCleanHtml(prodotto.longItemDescription);
+          const imageUrls = htmlProcessing.imageUrls;
+          const cleanedHtml = htmlProcessing.cleanedHtml;
+
+          console.log(`🖼️ Found ${imageUrls.length} images in HTML description`);
+          console.log(`📝 HTML cleaned: ${htmlProcessing.stats.originalLength} → ${htmlProcessing.stats.cleanedLength} chars`);
+
+          // Costruisci il prodotto per Shopify (USA HTML PULITO)
           const shopifyProduct = {
             product: {
               title: prodotto.itemDescription || '',
-              body_html: prodotto.longItemDescription ? he.decode(prodotto.longItemDescription) : '',
+              body_html: cleanedHtml, // 🎯 USA HTML SENZA IMMAGINI
               vendor: prodotto.productPrimaryBrand?.brandNodeName || '',
               product_type: prodotto.productSecondaryCategory?.categoryNodeName || '',
               variants: [
@@ -259,11 +390,12 @@ class Controller {
           // ⬅️ USA exactVariants INVECE DI variants
           const variants = exactVariants;
 
+          let productId; // 🎯 DICHIARAZIONE CORRETTA DI productId
           let productStatus = 'created';
 
           if (variants && variants.length > 0) {
             // Esiste già: verifica se il prodotto esiste ancora
-            const productId = variants[0].product_id;
+            productId = variants[0].product_id; // 🎯 ASSEGNAZIONE CORRETTA
             const variantId = variants[0].id;
             
             console.log(`🔄 UPDATING existing product:`);
@@ -322,8 +454,9 @@ class Controller {
                     }
                   );
 
+                  productId = createResponse.data.product.id; // 🎯 AGGIORNA productId
                   console.log(`✅ CREATE SUCCESS (after verify failed):`);
-                  console.log(`   - New Product ID: ${createResponse.data.product.id}`);
+                  console.log(`   - New Product ID: ${productId}`);
                   console.log(`   - Created title: ${createResponse.data.product.title}`);
                   console.log(`   - Created vendor: ${createResponse.data.product.vendor}`);
                   console.log(`   - Created at: ${createResponse.data.product.created_at}`);
@@ -368,8 +501,9 @@ class Controller {
                 }
               );
 
+              productId = createResponse.data.product.id; // 🎯 ASSEGNAZIONE CORRETTA
               console.log(`✅ CREATE SUCCESS:`);
-              console.log(`   - New Product ID: ${createResponse.data.product.id}`);
+              console.log(`   - New Product ID: ${productId}`);
               console.log(`   - Created title: ${createResponse.data.product.title}`);
               console.log(`   - Created vendor: ${createResponse.data.product.vendor}`);
               console.log(`   - Created at: ${createResponse.data.product.created_at}`);
@@ -385,6 +519,36 @@ class Controller {
               console.error(`   - Response: ${JSON.stringify(createError.response?.data)}`);
               throw createError;
             }
+          }
+
+          // 🆕 UPLOAD DELLE IMMAGINI AL PRODOTTO
+          let uploadedImages = [];
+          
+          if (imageUrls.length > 0 && productId) { // 🎯 Ora productId è correttamente definito!
+            console.log(`🖼️ Uploading ${imageUrls.length} images to product ${productId}...`);
+            
+            for (const imageUrl of imageUrls.slice(0, 5)) { // Limita a 5 immagini max
+              importResults.images_processed++;
+              console.log(`📤 Processing image ${importResults.images_processed}: ${imageUrl}`);
+              
+              const uploadResult = await this.uploadImageToShopify(imageUrl, productId);
+              uploadedImages.push(uploadResult);
+              
+              if (uploadResult.success) {
+                importResults.images_uploaded++;
+                console.log(`✅ Image uploaded successfully: ${uploadResult.imageId}`);
+              } else {
+                importResults.images_failed++;
+                console.log(`❌ Image upload failed: ${uploadResult.error}`);
+              }
+              
+              // Pausa per evitare rate limiting
+              await new Promise(r => setTimeout(r, 500));
+            }
+            
+            console.log(`📊 Images summary: ${importResults.images_uploaded} uploaded, ${importResults.images_failed} failed`);
+          } else {
+            console.log(`⚠️ Skipping image upload: imageUrls=${imageUrls.length}, productId=${productId}`);
           }
 
           console.log(`📋 Product status: ${productStatus.toUpperCase()}`);
@@ -403,7 +567,11 @@ class Controller {
             inventory_management: shopifyProduct.product.variants[0].inventory_management,
             weight: shopifyProduct.product.variants[0].weight,
             weight_unit: shopifyProduct.product.variants[0].weight_unit,
-            status: productStatus
+            status: productStatus,
+            images_found: imageUrls.length,
+            images_uploaded: uploadedImages.filter(img => img.success).length,
+            images_failed: uploadedImages.filter(img => !img.success).length,
+            html_processing: htmlProcessing.stats
           });
 
         } catch (productError) {
@@ -428,14 +596,6 @@ class Controller {
 
       const duration = Math.round((Date.now() - startTime) / 1000);
 
-      // Notifica completamento (se webhook service disponibile)
-      // await webhookService?.notifyImportComplete({
-      //   summary: importResults,
-      //   duration,
-      //   total_processed: processedCount,
-      //   results: risultati
-      // });
-
       console.log('✅ Import completed successfully');
       console.log(`📊 Results:`, importResults);
 
@@ -450,13 +610,6 @@ class Controller {
 
     } catch (error) {
       console.error('❌ Import process failed:', error);
-
-      // Notifica errore (se webhook service disponibile)
-      // await webhookService?.notifyImportError({
-      //   error: error.message,
-      //   stack: error.stack,
-      //   summary: importResults
-      // });
 
       res.status(500).json({ 
         success: false,
