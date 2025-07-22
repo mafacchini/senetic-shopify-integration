@@ -6,7 +6,7 @@ const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
 class Controller {
-  // 🆕 FUNZIONE: Estrae URL delle immagini dal HTML
+  // 🔧 FUNZIONE CORRETTA: Estrae URL delle immagini dal HTML (CON FILTRI FUNZIONANTI)
   extractImageUrls(htmlContent) {
     if (!htmlContent) {
       return [];
@@ -19,7 +19,7 @@ class Controller {
 
     // 🚫 DOMINI BLOCCATI (con protezioni anti-bot)
     const blockedDomains = [
-      'gfx3.senetic.com',     // ❌ Protezioni anti-bot/referrer
+      'gfx3.senetic.com',     // ❌ PRINCIPALE PROBLEMA - Protezioni anti-bot
       'cdn.senetic.com',      // ❌ Altri CDN protetti
       'assets.senetic.com'    // ❌ Assets protetti
     ];
@@ -34,9 +34,11 @@ class Controller {
     
     let blockedCount = 0;
     let allowedCount = 0;
+    let totalFound = 0;
     
     while ((match = imgRegex.exec(decodedHtml)) !== null) {
       let imgUrl = match[1];
+      totalFound++;
       
       if (imgUrl && 
           !imgUrl.startsWith('data:') && 
@@ -48,31 +50,41 @@ class Controller {
         } else if (imgUrl.startsWith('//')) {
           fullUrl = `https:${imgUrl}`;
         } else if (imgUrl.startsWith('/')) {
-          fullUrl = `https://senetic.pl${imgUrl}`;
+          fullUrl = `https://www.senetic.pl${imgUrl}`;
         } else {
-          fullUrl = `https://senetic.pl/${imgUrl}`;
+          fullUrl = `https://www.senetic.pl/${imgUrl}`;
         }
 
         try {
           const urlObj = new URL(fullUrl);
+          const hostname = urlObj.hostname;
           
-          // 🚫 BLOCCA domini con protezioni
-          if (blockedDomains.includes(urlObj.hostname)) {
+          // 🚫 CONTROLLO PRIORITARIO: BLOCCA domini problematici
+          if (blockedDomains.includes(hostname)) {
             blockedCount++;
-            console.warn(`🚫 BLOCKED (anti-bot protection): ${urlObj.hostname}`);
-            console.warn(`   Original URL: ${fullUrl}`);
-            console.warn(`   Reason: Server has referrer/bot protection - Shopify cannot access`);
-            continue;
+            console.warn(`🚫 BLOCKED: ${hostname} - ${fullUrl}`);
+            console.warn(`   ❌ REASON: Anti-bot protection - Shopify cannot download`);
+            continue; // ⬅️ IMPORTANTE: Salta questa immagine
           }
           
           // ✅ PERMETTI solo domini sicuri
-          if (!allowedDomains.includes(urlObj.hostname)) {
-            console.warn(`⚠️ UNKNOWN DOMAIN: ${urlObj.hostname} - URL: ${fullUrl}`);
+          if (!allowedDomains.includes(hostname)) {
+            console.warn(`⚠️ UNKNOWN DOMAIN: ${hostname} - Skipping: ${fullUrl}`);
+            continue; // ⬅️ IMPORTANTE: Salta questa immagine
+          }
+          
+          // Verifica estensione file
+          const extension = urlObj.pathname.split('.').pop().toLowerCase();
+          const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+          
+          if (!validExtensions.includes(extension)) {
+            console.warn(`⚠️ Invalid extension: ${extension} - Skipping: ${fullUrl}`);
             continue;
           }
-        
-          // 🔧 RIMUOVI la codifica URL problematica
-          if (!fullUrl.includes('%')) {
+          
+          // 🔧 Encoding URL (opzionale - solo se necessario)
+          let finalUrl = fullUrl;
+          if (!fullUrl.includes('%') && urlObj.hostname === 'senetic.pl') {
             try {
               const urlParts = fullUrl.split('senetic.pl');
               if (urlParts.length === 2) {
@@ -81,30 +93,36 @@ class Controller {
                 const encodedPath = pathPart.split('/').map(segment => 
                   segment ? encodeURIComponent(segment) : ''
                 ).join('/');
-                fullUrl = basePart + encodedPath;
+                finalUrl = basePart + encodedPath;
               }
             } catch (error) {
-              console.warn('Errore encoding URL:', error.message);
+              console.warn('⚠️ URL encoding failed:', error.message);
+              finalUrl = fullUrl; // Usa URL originale se encoding fallisce
             }
           }
 
           allowedCount++;
-          console.log(`✅ SAFE image URL: ${fullUrl}`);
-          imageUrls.push(fullUrl);
+          console.log(`✅ SAFE: ${hostname} - ${finalUrl}`);
+          imageUrls.push(finalUrl);
           
         } catch (urlError) {
-          console.warn(`⚠️ Invalid URL format: ${fullUrl} - Error: ${urlError.message}`);
+          console.warn(`⚠️ Invalid URL: ${fullUrl} - Error: ${urlError.message}`);
           continue;
         }
       }
     }
-  
-    console.log(`🖼️ Image extraction summary:`);
-    console.log(`   ✅ Safe URLs found: ${allowedCount}`);
-    console.log(`   🚫 Blocked URLs (anti-bot): ${blockedCount}`);
-    console.log(`   📝 Total processable images: ${imageUrls.length}`);
     
-    return [...new Set(imageUrls)];
+    console.log(`\n🖼️ IMAGE EXTRACTION SUMMARY:`);
+    console.log(`   📊 Total images found: ${totalFound}`);
+    console.log(`   ✅ Safe URLs: ${allowedCount}`);
+    console.log(`   🚫 Blocked URLs: ${blockedCount}`);
+    console.log(`   📝 Final processable: ${imageUrls.length}`);
+    
+    if (blockedCount > 0) {
+      console.log(`   🚨 NOTE: ${blockedCount} images blocked due to anti-bot protection`);
+    }
+    
+    return [...new Set(imageUrls)]; // Rimuovi duplicati
   }
 
   // 🆕 FUNZIONE: Rimuove immagini dal HTML
@@ -681,38 +699,35 @@ class Controller {
           if (imageUrls.length > 0 && productId) {
             console.log(`🖼️ Processing ${imageUrls.length} images for product ${productId}...`);
             
-            // 🆕 STEP 1: Controlla immagini esistenti (VERSIONE MIGLIORATA)
+            // 🆕 STEP 1: Controlla immagini esistenti
             const existingImagesCheck = await this.checkExistingImages(productId);
-            let existingImageData = [];
 
             if (existingImagesCheck.success) {
-              existingImageData = existingImagesCheck.existingImageData || [];
               console.log(`📊 Product has ${existingImagesCheck.count} existing images`);
               
               if (existingImagesCheck.count > 0) {
-                console.log(`🔍 Existing images normalized filenames:`);
-                existingImageData.forEach((img, index) => {
-                  console.log(`   ${index + 1}. ${img.normalizedFilename} (ID: ${img.id})`);
+                console.log(`🔍 Existing images URLs:`);
+                existingImagesCheck.existingUrls.forEach((url, index) => {
+                  const normalized = this.normalizeUrlForComparison(url);
+                  console.log(`   ${index + 1}. ${url}`);
+                  console.log(`      Normalized: ${normalized}`);
                 });
               }
             } else {
               console.warn(`⚠️ Could not check existing images: ${existingImagesCheck.error}`);
             }
 
-            // 🆕 STEP 2: Upload solo immagini nuove (CON CONFRONTO MIGLIORATO)
+            // 🆕 STEP 2: Upload solo immagini nuove
             let newUploads = 0;
             let duplicatesSkipped = 0;
             let uploadErrors = 0;
-            let existingUrls = [];
+
+            // 🔧 FIX: Definisci existingUrls correttamente
+            const existingUrls = existingImagesCheck.success ? existingImagesCheck.existingUrls : [];
 
             for (const imageUrl of imageUrls.slice(0, 5)) {
               importResults.images_processed++;
               console.log(`📤 Processing image ${importResults.images_processed}: ${imageUrl}`);
-              
-              // 🔧 CORREZIONE: Usa existingImagesCheck invece di existingImageData
-              if (existingImagesCheck.success && existingImagesCheck.existingUrls) {
-                existingUrls = existingImagesCheck.existingUrls;
-              }
               
               const uploadResult = await this.uploadImageToShopify(imageUrl, productId, existingUrls);
               uploadedImages.push(uploadResult);
