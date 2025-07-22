@@ -14,14 +14,16 @@ jobs:
     steps:
     - name: 📦 Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Per git diff
       
-    - name: 🚀 Deploy Theme via API
+    - name: 🔍 Verify Theme Access
       env:
         SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
         SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
         SHOPIFY_THEME_ID: ${{ secrets.SHOPIFY_THEME_ID }}
       run: |
-        echo "🎨 Deploy tema via Shopify API..."
+        echo "🔍 Verifico accesso al tema..."
         
         # Test di connessione al tema
         RESPONSE=$(curl -s -w "%{http_code}" -o /tmp/theme_info.json \
@@ -32,6 +34,10 @@ jobs:
         if [ "$RESPONSE" -eq 200 ]; then
           echo "✅ Tema trovato:"
           cat /tmp/theme_info.json | jq -r '.theme.name + " (Role: " + .theme.role + ")"'
+          
+          # Salva info tema per step successivi
+          echo "THEME_NAME=$(cat /tmp/theme_info.json | jq -r '.theme.name')" >> $GITHUB_ENV
+          echo "THEME_ROLE=$(cat /tmp/theme_info.json | jq -r '.theme.role')" >> $GITHUB_ENV
         else
           echo "❌ Errore accesso tema. Status: $RESPONSE"
           cat /tmp/theme_info.json
@@ -48,55 +54,83 @@ jobs:
         
         cd proomnibus-shop-dawn
         
-        # Trova i file modificati nel push corrente
+        # Determina file da deployare
         if [ "${{ github.event_name }}" = "push" ]; then
-          echo "📋 File modificati in questo commit:"
-          git diff --name-only ${{ github.event.before }}..${{ github.sha }} || echo "Primo commit o errore diff"
+          echo "📋 Analisi file modificati..."
           
-          # Lista tutti i file del tema per deploy completo
-          FILES_TO_DEPLOY=$(find . -type f \( -name "*.liquid" -o -name "*.json" -o -name "*.css" -o -name "*.js" -o -name "*.svg" -o -name "*.png" -o -name "*.jpg" -o -name "*.gif" \) | head -10)
+          # File modificati in questo commit (relativi alla cartella tema)
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- . 2>/dev/null || echo "")
+          
+          if [ -n "$CHANGED_FILES" ]; then
+            echo "📁 File modificati:"
+            echo "$CHANGED_FILES"
+            FILES_TO_DEPLOY="$CHANGED_FILES"
+          else
+            echo "📁 Nessun file modificato, deploy file principali..."
+            FILES_TO_DEPLOY=$(find . -maxdepth 2 -type f \( -name "*.liquid" -o -name "*.json" -o -name "*.css" \) | head -5)
+          fi
         else
-          echo "🎮 Deploy manuale - uploading key files..."
-          FILES_TO_DEPLOY=$(find . -type f \( -name "*.liquid" -o -name "*.json" -o -name "*.css" -o -name "*.js" \) | head -5)
+          echo "🎮 Deploy manuale - file principali..."
+          FILES_TO_DEPLOY=$(find . -maxdepth 2 -type f \( -name "*.liquid" -o -name "*.json" -o -name "*.css" -o -name "*.js" \) | head -8)
         fi
         
-        echo "📁 File da deployare:"
+        echo "📤 File da deployare:"
         echo "$FILES_TO_DEPLOY"
         
-        # Deploy dei file (esempio con alcuni file chiave)
+        # Contatori
+        SUCCESS_COUNT=0
+        ERROR_COUNT=0
+        
+        # Deploy dei file
         for file in $FILES_TO_DEPLOY; do
+          # Skip se non esiste
+          [ ! -f "$file" ] && continue
+          
           # Rimuovi ./ dall'inizio del path
           CLEAN_PATH=${file#./}
           echo "📤 Uploading: $CLEAN_PATH"
           
-          # Codifica il contenuto in base64 per l'API
-          CONTENT=$(base64 -i "$file" | tr -d '\n')
+          # Determina se usare attachment (binario) o value (testo)
+          if file --mime-type "$file" | grep -q "text/\|application/json"; then
+            # File di testo - usa 'value'
+            CONTENT=$(cat "$file" | jq -Rs .)
+            JSON_PAYLOAD="{\"asset\":{\"key\":\"$CLEAN_PATH\",\"value\":$CONTENT}}"
+          else
+            # File binario - usa 'attachment' (base64)
+            CONTENT=$(base64 -i "$file" | tr -d '\n')
+            JSON_PAYLOAD="{\"asset\":{\"key\":\"$CLEAN_PATH\",\"attachment\":\"$CONTENT\"}}"
+          fi
           
           # Upload via API Shopify
-          curl -s -X PUT \
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o /tmp/upload_result.json \
+            -X PUT \
             "$SHOPIFY_STORE_URL/admin/api/2023-10/themes/$SHOPIFY_THEME_ID/assets.json" \
             -H "X-Shopify-Access-Token: $SHOPIFY_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"asset\": {
-                \"key\": \"$CLEAN_PATH\",
-                \"attachment\": \"$CONTENT\"
-              }
-            }" > /tmp/upload_result.json
+            -d "$JSON_PAYLOAD")
           
           # Verifica risultato
-          if grep -q "errors" /tmp/upload_result.json; then
-            echo "❌ Errore upload $CLEAN_PATH:"
-            cat /tmp/upload_result.json
-          else
+          if [ "$HTTP_CODE" -eq 200 ]; then
             echo "✅ $CLEAN_PATH uploadato"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          else
+            echo "❌ Errore upload $CLEAN_PATH (HTTP: $HTTP_CODE):"
+            cat /tmp/upload_result.json
+            ERROR_COUNT=$((ERROR_COUNT + 1))
           fi
           
           # Pausa per evitare rate limiting
-          sleep 0.5
+          sleep 0.8
         done
         
+        # Salva statistiche per step successivi
+        echo "DEPLOY_SUCCESS=$SUCCESS_COUNT" >> $GITHUB_ENV
+        echo "DEPLOY_ERRORS=$ERROR_COUNT" >> $GITHUB_ENV
+        
+        echo ""
         echo "🎉 Deploy completato!"
+        echo "✅ Successi: $SUCCESS_COUNT"
+        echo "❌ Errori: $ERROR_COUNT"
 
     - name: 📊 Deploy Summary
       if: always()
@@ -104,14 +138,18 @@ jobs:
         SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
         SHOPIFY_THEME_ID: ${{ secrets.SHOPIFY_THEME_ID }}
       run: |
-        echo "📊 Riepilogo Deploy:"
-        echo "🎯 Tema ID: $SHOPIFY_THEME_ID"
+        echo "📊 Riepilogo Deploy Completo:"
+        echo "🎯 Tema: $THEME_NAME (ID: $SHOPIFY_THEME_ID)"
+        echo "🏷️ Ruolo: $THEME_ROLE"
+        echo "✅ File deployati: $DEPLOY_SUCCESS"
+        echo "❌ Errori: $DEPLOY_ERRORS"
         echo "🌟 Commit: ${{ github.sha }}"
         echo "👤 Autore: ${{ github.actor }}"
         echo "🕐 Timestamp: $(date)"
         echo ""
-        echo "🔗 Link tema live:"
-        echo "https://b6b44e-5b.myshopify.com/?preview_theme_id=$SHOPIFY_THEME_ID"
+        echo "🔗 Link diretti:"
+        echo "📱 Preview: https://b6b44e-5b.myshopify.com/?preview_theme_id=$SHOPIFY_THEME_ID"
+        echo "⚙️ Editor: https://b6b44e-5b.myshopify.com/admin/themes/$SHOPIFY_THEME_ID/editor"
         
     - name: 📧 Notify Deployment
       if: always()
@@ -120,9 +158,10 @@ jobs:
         status: ${{ job.status }}
         text: |
           🎨 Deploy tema Shopify: ${{ job.status }}
-          🎯 Tema: Dawn (#$SHOPIFY_THEME_ID)
+          🎯 Tema: ${{ env.THEME_NAME }} (#${{ secrets.SHOPIFY_THEME_ID }})
+          ✅ Successi: ${{ env.DEPLOY_SUCCESS }} | ❌ Errori: ${{ env.DEPLOY_ERRORS }}
           🌟 Commit: ${{ github.sha }}
           👤 Autore: ${{ github.actor }}
-          🔗 Preview: https://b6b44e-5b.myshopify.com/?preview_theme_id=$SHOPIFY_THEME_ID
+          🔗 Preview: https://b6b44e-5b.myshopify.com/?preview_theme_id=${{ secrets.SHOPIFY_THEME_ID }}
       env:
         SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
