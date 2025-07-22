@@ -631,6 +631,19 @@ class Controller {
 
           if (imageUrls.length > 0 && productId) {
             console.log(`🖼️ Processing ${imageUrls.length} images for product ${productId}...`);
+
+            // Debug temporaneo - aggiungi questo prima del controllo duplicati
+            console.log('\n🔍 === DEBUG DUPLICATE CHECK ===');
+            console.log(`New image URL: ${imageUrl}`);
+            console.log(`New image normalized: ${normalizedNewUrl}`);
+            console.log('Existing images:');
+            existingUrls.forEach((url, index) => {
+              const normalized = this.normalizeUrlForComparison(url);
+              console.log(`  ${index + 1}. ${url}`);
+              console.log(`     Normalized: ${normalized}`);
+              console.log(`     Match: ${normalized === normalizedNewUrl ? 'YES' : 'NO'}`);
+            });
+            console.log('=== END DEBUG ===\n');
             
             // 🆕 STEP 1: Controlla immagini esistenti (VERSIONE MIGLIORATA)
             const existingImagesCheck = await this.checkExistingImages(productId);
