@@ -885,6 +885,9 @@ class Controller {
       imported: 0,
       updated: 0,
       skipped: 0,
+      skipped_no_inventory: 0,      // 🆕 Prodotti senza inventario
+      skipped_zero_stock: 0,        // 🆕 Prodotti con stock = 0
+      skipped_no_images: 0,         // 🆕 Prodotti senza immagini
       failed: 0,
       errors: [],
       images_processed: 0,
@@ -926,16 +929,16 @@ class Controller {
       console.log(`📦 Found ${inventoryLines.length} inventory items`);
       console.log(`📋 Found ${catalogueLines.length} catalogue items`);
 
-      // Filtri per categorie e brand
+      // Filtri per categorie (BRAND RIMOSSO - IMPORTA TUTTI I BRAND)
       const categorieDesiderate = [
         'Sistemi di sorveglianza',
-        'Reti'
+        'Reti',
+        'Dispositivi smart per la casa',
+        'Allarmi e sensori domestici'
       ].map(c => c.trim().toLowerCase());
 
-      const brandDesiderati = [
-        'Hikvision',
-        'Ubiquiti'
-      ].map(b => b.trim().toLowerCase());
+      // 🆕 FILTRO BRAND RIMOSSO - Ora importiamo TUTTI i brand nelle categorie selezionate
+      console.log(`🔓 Brand filter REMOVED - importing ALL brands in selected categories`);
 
       // 2. Crea una mappa inventario per manufacturerItemCode
       const inventoryMap = {};
@@ -947,30 +950,36 @@ class Controller {
 
       console.log(`🗂️ Created inventory map with ${Object.keys(inventoryMap).length} items`);
 
-      // 3. Filtra prodotti per categoria e brand
+      // 3. Filtra prodotti SOLO per categoria (brand filter rimosso)
       const prodottiFiltrati = catalogueLines.filter(
         prodotto =>
           prodotto.productSecondaryCategory &&
           prodotto.productSecondaryCategory.categoryNodeName &&
-          categorieDesiderate.includes(prodotto.productSecondaryCategory.categoryNodeName.trim().toLowerCase()) &&
-          prodotto.productPrimaryBrand &&
-          prodotto.productPrimaryBrand.brandNodeName &&
-          brandDesiderati.includes(prodotto.productPrimaryBrand.brandNodeName.trim().toLowerCase())
+          categorieDesiderate.includes(prodotto.productSecondaryCategory.categoryNodeName.trim().toLowerCase())
       );
 
       console.log(`🔍 Filtered to ${prodottiFiltrati.length} products matching criteria`);
 
-      // Limita a massimo 10 prodotti
-      const prodottiDaImportare = prodottiFiltrati.slice(0, 10);
+      // 🆕 LIMITE RIMOSSO - Importa TUTTI i prodotti filtrati
+      const prodottiDaImportare = prodottiFiltrati; // Nessun limite
       const totalProducts = prodottiDaImportare.length;
       let processedCount = 0;
 
-      console.log(`📦 Processing ${totalProducts} products...`);
+      console.log(`📦 Processing ALL ${totalProducts} products (no limit applied)...`);
+      
+      // 🆕 INFORMAZIONI SUI FILTRI APPLICATI
+      console.log(`\n🔧 ACTIVE FILTERS:`);
+      console.log(`   🏷️ Categories: ${categorieDesiderate.join(', ')}`);
+      console.log(`   🏢 Brands: ALL BRANDS (no brand filter applied)`);
+      console.log(`   📦 Stock: > 0 (zero stock products excluded)`);
+      console.log(`   🖼️ Images: NOT REQUIRED (products without images will be imported)`);
+      console.log(`   📈 Limit: NO LIMIT (all matching products will be imported)`);
+      console.log(`════════════════════════════════════════════════════════════════════════`);
 
       console.log('\n📋 PRODUCTS MATCHING FILTERS:');
       prodottiFiltrati.forEach((prodotto, index) => {
         console.log(`${index + 1}. ${prodotto.manufacturerItemCode} - ${prodotto.itemDescription}`);
-        console.log(`   Brand: ${prodotto.productPrimaryBrand?.brandNodeName}`);
+        console.log(`   Brand: ${prodotto.productPrimaryBrand?.brandNodeName || 'N/A'}`);
         console.log(`   Category: ${prodotto.productSecondaryCategory?.categoryNodeName}`);
       });
       console.log('─'.repeat(80));
@@ -984,6 +993,7 @@ class Controller {
           if (!inventoryItem) {
             console.log(`⚠️ Skipping ${prodotto.manufacturerItemCode} - not found in inventory`);
             importResults.skipped++;
+            importResults.skipped_no_inventory++;    // 🆕 Contatore specifico
             continue;
           }
 
@@ -995,6 +1005,14 @@ class Controller {
             ? inventoryItem.availability.stockSchedules.reduce((sum, s) => sum + (s.targetStock || 0), 0)
             : 0;
 
+          // 🆕 FILTRO 1: Escludi prodotti con quantità = 0
+          if (availability <= 0) {
+            console.log(`⚠️ Skipping ${prodotto.manufacturerItemCode} - zero stock (availability: ${availability})`);
+            importResults.skipped++;
+            importResults.skipped_zero_stock++;      // 🆕 Contatore specifico
+            continue;
+          }
+
           // 🆕 ESTRAZIONE E PULIZIA IMMAGINI DAL HTML
           const htmlProcessing = this.extractImagesAndCleanHtml(prodotto.longItemDescription);
           const imageUrls = htmlProcessing.imageUrls;
@@ -1002,6 +1020,13 @@ class Controller {
 
           console.log(`🖼️ Found ${imageUrls.length} images in HTML description`);
           console.log(`📝 HTML cleaned: ${htmlProcessing.stats.originalLength} → ${htmlProcessing.stats.cleanedLength} chars`);
+
+          // 🆕 FILTRO IMMAGINI RIMOSSO - Ora importiamo anche prodotti senza immagini
+          if (imageUrls.length === 0) {
+            console.log(`ℹ️ Product ${prodotto.manufacturerItemCode} has no images - importing anyway`);
+          } else {
+            console.log(`✅ Product ${prodotto.manufacturerItemCode} has ${imageUrls.length} images - will upload them`);
+          }
 
           // Costruisci il prodotto per Shopify (USA HTML PULITO)
           const shopifyProduct = {
@@ -1305,6 +1330,19 @@ class Controller {
 
       console.log('✅ Import completed successfully');
       console.log(`📊 Results:`, importResults);
+      
+      // 🆕 LOG DETTAGLIATO DEI FILTRI APPLICATI
+      console.log(`\n📋 DETAILED FILTERING REPORT:`);
+      console.log(`   📦 Total products found: ${prodottiFiltrati.length}`);
+      console.log(`   🔄 Products processed: ${prodottiDaImportare.length}`);
+      console.log(`   ✅ Successfully imported/updated: ${importResults.imported + importResults.updated}`);
+      console.log(`   ⚠️ Total skipped: ${importResults.skipped}`);
+      console.log(`      ├─ 📦 No inventory data: ${importResults.skipped_no_inventory}`);
+      console.log(`      └─ 🔢 Zero stock: ${importResults.skipped_zero_stock}`);
+      console.log(`   🖼️ Image filter: DISABLED (products without images are imported)`);
+      console.log(`   ❌ Failed: ${importResults.failed}`);
+      console.log(`   🖼️ Images: ${importResults.images_uploaded}/${importResults.images_processed} uploaded`);
+      console.log(`════════════════════════════════════════════════════════════════════════\n`);
 
       res.json({ 
         success: true,
